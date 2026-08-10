@@ -466,7 +466,7 @@ async function switchPanel(name, opts = {}) {
   // Lazy-load panel data
   if (nextPanel === 'tasks') await loadCrons();
   if (nextPanel === 'kanban') await loadKanban();
-  if (nextPanel === 'skills') await loadSkills();
+  if (nextPanel === 'skills') { await loadSkills(); loadSkillsPending(); }
   if (nextPanel === 'memory') await loadMemory();
   if (nextPanel === 'workspaces') await loadWorkspacesPanel();
   if (nextPanel === 'profiles') await loadProfilesPanel();
@@ -5328,6 +5328,296 @@ function filterSkills() {
 }
 
 
+// ── Staged skill writes (skills.write_approval) ──────────────────────────────
+// When the gate is on, the agent's skill writes are staged instead of saved.
+// They live in a pinned group ABOVE #skillsList (a sibling, not a child:
+// renderSkills() clears that container on every search keystroke) and open in
+// the same main view a real skill opens in.
+
+let _skillsPendingState = null;   // last /api/skills/pending response
+let _currentSkillPending = null;  // { id, action, name, summary } currently open
+
+function _skillPendingActionLabel(action) {
+  const key = 'skill_pending_action_' + String(action || '').replace(/[^a-z_]/g, '');
+  const label = t(key);
+  return label === key ? String(action || '') : label;
+}
+
+async function loadSkillsPending() {
+  try {
+    _skillsPendingState = await api('/api/skills/pending');
+  } catch (e) {
+    // A pending-review failure must never take the Skills panel down with it.
+    _skillsPendingState = null;
+  }
+  renderSkillsPending();
+  _updateSkillsPendingBadge();
+}
+
+function _updateSkillsPendingBadge() {
+  const count = (_skillsPendingState && _skillsPendingState.count) || 0;
+  for (const id of ['skillsPendingBadgeDesktop', 'skillsPendingBadgeMobile']) {
+    const el = $(id);
+    if (!el) continue;
+    el.textContent = count > 9 ? '9+' : String(count);
+    el.style.display = count ? '' : 'none';
+    el.title = count ? t('skill_pending_badge_title', count) : '';
+  }
+}
+
+function renderSkillsPending() {
+  const box = $('skillsPending');
+  if (!box) return;
+  const state = _skillsPendingState;
+  const items = (state && state.items) || [];
+  // Nothing staged and nothing to explain -> the group stays out of the way.
+  if (!state || !state.available || !items.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = '';
+  box.innerHTML = '';
+
+  const hdr = document.createElement('div');
+  hdr.className = 'skills-pending-header';
+  const title = document.createElement('span');
+  title.className = 'skills-pending-title';
+  title.textContent = t('skill_pending_heading', items.length);
+  const actions = document.createElement('span');
+  actions.className = 'skills-pending-bulk';
+  const approveAll = document.createElement('button');
+  approveAll.type = 'button';
+  approveAll.className = 'skills-pending-bulk-btn';
+  approveAll.textContent = t('skill_pending_approve_all');
+  approveAll.onclick = () => resolveSkillPending('all', true);
+  const rejectAll = document.createElement('button');
+  rejectAll.type = 'button';
+  rejectAll.className = 'skills-pending-bulk-btn';
+  rejectAll.textContent = t('skill_pending_reject_all');
+  rejectAll.onclick = () => resolveSkillPending('all', false);
+  actions.append(approveAll, rejectAll);
+  hdr.append(title, actions);
+  box.appendChild(hdr);
+
+  for (const item of items) {
+    const el = document.createElement('div');
+    el.className = 'skill-pending-item';
+    el.dataset.pendingId = item.id;
+    const action = document.createElement('span');
+    action.className = 'skill-pending-action action-' + String(item.action || '').replace(/[^a-z_]/g, '');
+    action.textContent = _skillPendingActionLabel(item.action);
+    const name = document.createElement('span');
+    name.className = 'skill-pending-name';
+    name.textContent = item.name || '';
+    const gist = document.createElement('span');
+    gist.className = 'skill-pending-gist';
+    gist.textContent = item.summary || '';
+    const meta = document.createElement('span');
+    meta.className = 'skill-pending-meta';
+    const origin = item.origin === 'background_review'
+      ? t('skill_pending_origin_background')
+      : t('skill_pending_origin_agent');
+    const when = item.created_at
+      ? _formatRelativeSessionTime(item.created_at * 1000)
+      : '';
+    meta.textContent = when ? `${origin} · ${when}` : origin;
+    el.append(action, name, gist, meta);
+    el.onclick = () => openSkillPending(item.id, el);
+    box.appendChild(el);
+  }
+}
+
+function _clearSkillSelection() {
+  // Two selection sets share one main view: real skills (.skill-item) and
+  // staged writes (.skill-pending-item). Both entry points clear both, or two
+  // rows read as selected at once.
+  document.querySelectorAll('.skill-item.active, .skill-pending-item.active')
+    .forEach(e => e.classList.remove('active'));
+}
+
+async function openSkillPending(pendingId, el) {
+  _clearSkillSelection();
+  if (el) el.classList.add('active');
+  _skillPreFormDetail = null;
+  _editingSkillName = null;
+  _currentSkillDetail = null;
+  try {
+    const data = await api('/api/skills/pending/diff?id=' + encodeURIComponent(pendingId));
+    _currentSkillPending = data;
+    _renderSkillPendingDetail(data);
+  } catch (e) {
+    _currentSkillPending = null;
+    _renderSkillError(t('skill_pending_heading', 1), e.message);
+    // The record is probably gone (resolved from the CLI); resync the list.
+    loadSkillsPending();
+  }
+}
+
+function _renderSkillPendingDetail(data) {
+  const title = $('skillDetailTitle');
+  const body = $('skillDetailBody');
+  const empty = $('skillDetailEmpty');
+  if (title) title.textContent = data.summary || data.name || '';
+  const action = String(data.action || '');
+  const diff = data.diff || '';
+  let html = '<div class="skill-pending-detail-head">'
+    + `<span class="skill-pending-action action-${esc(action.replace(/[^a-z_]/g, ''))}">${esc(_skillPendingActionLabel(action))}</span>`
+    + `<span class="skill-pending-detail-name">${esc(data.name || '')}</span>`
+    + `<span class="skill-pending-detail-origin">${esc(data.origin === 'background_review' ? t('skill_pending_origin_background') : t('skill_pending_origin_agent'))}</span>`
+    + '</div>';
+
+  if (action === 'create') {
+    // skill_pending_diff() returns the whole new SKILL.md for a create, not a
+    // diff -- render it the way a real skill renders, since "what would this
+    // skill look like" is the question being asked.
+    const { frontmatter, body: markdownBody } = _stripYamlFrontmatter(diff);
+    if (frontmatter) {
+      html += `<details class="skill-frontmatter"><summary>${esc(t('skill_metadata'))}</summary><pre><code>${esc(frontmatter)}</code></pre></details>`;
+    }
+    html += _skillMarkdownHtml(markdownBody || diff || '(no content)');
+  } else if (action === 'delete' || action === 'remove_file') {
+    // Only a one-line sentence comes back for these. Approving a deletion
+    // blind is the worst affordance in the set, so show what would be lost.
+    html += `<div class="skill-pending-warning">${esc(diff || t('skill_pending_delete_warning'))}</div>`;
+    html += '<div class="skill-pending-lost" id="skillPendingLost"></div>';
+  } else {
+    html += diff
+      ? `<pre class="diff-block">${_colorDiffLines(diff)}</pre>`
+      : `<div class="skill-pending-warning">${esc(t('skill_pending_no_change'))}</div>`;
+  }
+
+  body.innerHTML = `<div class="main-view-content skill-detail-content skill-pending-detail">${html}</div>`;
+  if (action === 'create') _enhanceSkillMarkdown(body);
+  body.style.display = '';
+  if (empty) empty.style.display = 'none';
+  _skillMode = 'pending';
+  _setSkillHeaderButtons('pending');
+  if (action === 'delete' || action === 'remove_file') _loadSkillPendingLostContent(data);
+}
+
+async function _loadSkillPendingLostContent(data) {
+  const host = $('skillPendingLost');
+  if (!host || !data.name) return;
+  try {
+    const q = '/api/skills/content?name=' + encodeURIComponent(data.name)
+      + (data.action === 'remove_file' && data.file_path ? '&file=' + encodeURIComponent(data.file_path) : '');
+    const current = await api(q);
+    const content = (current && current.content) || '';
+    if (!content) return;
+    host.innerHTML = `<details><summary>${esc(t('skill_pending_current_content'))}</summary>`
+      + `<pre><code>${esc(content)}</code></pre></details>`;
+  } catch (e) {
+    // Best-effort context only -- the warning line above already stands alone.
+  }
+}
+
+function approveCurrentSkillPending() {
+  if (_currentSkillPending) resolveSkillPending(_currentSkillPending.id, true);
+}
+
+function rejectCurrentSkillPending() {
+  if (_currentSkillPending) resolveSkillPending(_currentSkillPending.id, false);
+}
+
+async function resolveSkillPending(pendingId, approve) {
+  const path = approve ? '/api/skills/pending/approve' : '/api/skills/pending/reject';
+  const openedId = _currentSkillPending && _currentSkillPending.id;
+  const targetSkill = _currentSkillPending && _currentSkillPending.name;
+  let result;
+  try {
+    result = await api(path, { method: 'POST', body: JSON.stringify({ id: pendingId }) });
+  } catch (e) {
+    showToast(t('skill_pending_failed', e.message), 5000, 'warning');
+    await loadSkillsPending();
+    return;
+  }
+
+  const failures = (result && result.failures) || [];
+  if (failures.length) {
+    // A failed apply keeps its record staged -- say so rather than implying
+    // the change was dropped.
+    showToast(t('skill_pending_failed', failures[0].error || ''), 6000, 'warning');
+  } else if (approve) {
+    showToast(t('skill_pending_approved', result.applied || 0));
+  } else {
+    showToast(t('skill_pending_rejected', result.rejected || 0));
+  }
+
+  const resolvedOpen = pendingId === 'all' || pendingId === openedId;
+  if (resolvedOpen && !failures.length) {
+    _currentSkillPending = null;
+    _clearSkillDetailToEmpty();
+  }
+  if (approve && !failures.length) {
+    // The skill tree changed: drop the cache and reload, then re-open the
+    // affected skill if it was already on screen.
+    _skillsData = null;
+    await loadSkills();
+    if (resolvedOpen && targetSkill && pendingId !== 'all') {
+      const row = Array.from(document.querySelectorAll('.skill-item'))
+        .find(e => e.querySelector('.skill-name') && e.querySelector('.skill-name').textContent === targetSkill);
+      if (row) openSkill(targetSkill, row);
+    }
+  }
+  await loadSkillsPending();
+}
+
+let _skillWriteApprovalBound = false;
+
+async function _initSkillWriteApprovalToggle() {
+  const cb = $('settingsSkillWriteApproval');
+  const field = $('settingsSkillWriteApprovalField');
+  if (!cb) return;
+  let state = null;
+  try {
+    state = await api('/api/skills/pending/count');
+  } catch (e) {
+    state = null;
+  }
+  // No agent source mounted -> the gate cannot be enforced, so offering the
+  // control would be a lie. Hide the field rather than showing a dead toggle.
+  if (!state || !state.available) {
+    if (field) field.style.display = 'none';
+    return;
+  }
+  if (field) field.style.display = '';
+  cb.checked = state.gate_enabled === true;
+  if (_skillWriteApprovalBound) return;
+  _skillWriteApprovalBound = true;
+  cb.addEventListener('change', async () => {
+    const desired = cb.checked;
+    try {
+      const result = await api('/api/skills/write-approval', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: desired }),
+      });
+      cb.checked = !!(result && result.gate_enabled);
+      _skillsPendingState = result && result.available ? result : _skillsPendingState;
+      renderSkillsPending();
+      _updateSkillsPendingBadge();
+      showToast(desired ? t('skill_write_approval_on') : t('skill_write_approval_off'));
+    } catch (e) {
+      // Fail closed on the UI too: never leave the checkbox claiming a state
+      // the config does not have.
+      cb.checked = !desired;
+      showToast(t('skill_write_approval_failed', e.message), 5000, 'warning');
+    }
+  });
+}
+
+function _clearSkillDetailToEmpty() {
+  const body = $('skillDetailBody');
+  const empty = $('skillDetailEmpty');
+  const title = $('skillDetailTitle');
+  if (title) title.textContent = '';
+  if (body) { body.innerHTML = ''; body.style.display = 'none'; }
+  if (empty) empty.style.display = '';
+  _skillMode = 'empty';
+  _setSkillHeaderButtons('empty');
+}
+
+
 async function toggleSkill(name, currentlyEnabled) {
   const newEnabled = !currentlyEnabled;
   try {
@@ -5435,19 +5725,25 @@ function _setSkillHeaderButtons(mode) {
   const delBtn = $('btnDeleteSkillDetail');
   const cancelBtn = $('btnCancelSkillDetail');
   const saveBtn = $('btnSaveSkillDetail');
+  const approveBtn = $('btnApproveSkillPending');
+  const rejectBtn = $('btnRejectSkillPending');
   const show = b => b && (b.style.display = '');
   const hide = b => b && (b.style.display = 'none');
+  hide(approveBtn); hide(rejectBtn);
   if (mode === 'read') { if (header) header.style.display = 'flex';  show(editBtn); show(delBtn); hide(cancelBtn); hide(saveBtn); }
   else if (mode === 'create' || mode === 'edit') { if (header) header.style.display = 'flex'; hide(editBtn); hide(delBtn); show(cancelBtn); show(saveBtn); }
+  else if (mode === 'pending') { if (header) header.style.display = 'flex'; hide(editBtn); hide(delBtn); hide(cancelBtn); hide(saveBtn); show(rejectBtn); show(approveBtn); }
   else { if (header) header.style.display = 'none';  hide(editBtn); hide(delBtn); hide(cancelBtn); hide(saveBtn); }
 }
 
 async function openSkill(name, el) {
-  // Highlight active skill in the sidebar list
-  document.querySelectorAll('.skill-item').forEach(e => e.classList.remove('active'));
+  // Highlight active skill in the sidebar list. Clears the staged-write
+  // selection too -- both row types share one main view.
+  _clearSkillSelection();
   if (el) el.classList.add('active');
   _skillPreFormDetail = null;
   _editingSkillName = null;
+  _currentSkillPending = null;
   try {
     const data = await api(`/api/skills/content?name=${encodeURIComponent(name)}`);
     if (data && (data.success === false || data.error)) {
@@ -6996,6 +7292,17 @@ async function _profileSwitchPanelLoad(){
   _editingCronId = null;
   _cronIsDuplicate = false;
   _clearCronDetail();
+  // Staged skill writes are per-profile: drop the previous profile's queue
+  // rather than leaving a stale badge/list pointing at ids that no longer
+  // resolve. loadSkillsPending() repopulates from the new profile.
+  // Guarded because this function is also exercised in isolation (extracted
+  // and run under node) by the cross-profile Tasks tests; the static test in
+  // test_skill_write_approval.py pins the call so a rename still fails loudly.
+  _skillsPendingState = null;
+  _currentSkillPending = null;
+  if (typeof renderSkillsPending === 'function') renderSkillsPending();
+  if (typeof _updateSkillsPendingBadge === 'function') _updateSkillsPendingBadge();
+  if (typeof loadSkillsPending === 'function') loadSkillsPending();
   if (_currentPanel === 'skills') await loadSkills();
   if (_currentPanel === 'memory') await loadMemory();
   if (_currentPanel === 'tasks') await loadCrons();
@@ -10098,6 +10405,11 @@ async function loadSettingsPanel(){
         _schedulePreferencesAutosave();
       },{once:false});
     }
+    // Skill write-approval is an AGENT config key (skills.write_approval in
+    // the active profile's config.yaml), not a WebUI-local setting, so it does
+    // not ride the preferences autosave payload -- it has its own endpoint and
+    // is shared with the Hermes CLI and gateways for that profile.
+    _initSkillWriteApprovalToggle();
     const hideEmptyStatePanelCb=$('settingsHideEmptyStatePanel');
     if(hideEmptyStatePanelCb){
       hideEmptyStatePanelCb.checked=settings.hide_empty_state_panel===true;

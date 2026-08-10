@@ -80,6 +80,7 @@ from api.gateway_chat import WEBUI_LOCAL_CHAT_BACKEND
 from api.metering import meter
 from api.run_journal import RunJournalWriter
 from api.todo_state import attach_todo_state, emit_todo_state
+from api.skill_pending_state import emit_skill_pending_state
 from api.turn_journal import append_turn_journal_event_for_stream
 from api.usage import prompt_cache_hit_percent
 from api.models import (
@@ -15111,6 +15112,23 @@ def _run_agent_streaming(
                         session_id=session_id,
                         stream_id=stream_id,
                     )
+                    # Same mirror shape for a staged skill write: when
+                    # skills.write_approval is on, skill_manage stages
+                    # instead of writing and the turn carries on, so the
+                    # Skills panel needs its own signal to show the
+                    # pending item without waiting for a manual refresh.
+                    # Same `result`-vs-`preview` degradation applies.
+                    emit_skill_pending_state(
+                        put,
+                        name=name,
+                        function_result=(
+                            cb_kwargs.get('result')
+                            if cb_kwargs.get('result') is not None
+                            else preview
+                        ),
+                        session_id=session_id,
+                        stream_id=stream_id,
+                    )
                     _tool_stats = meter().get_stats(stream_id)
                     _tool_stats['session_id'] = session_id
                     _tool_stats['usage'] = _live_usage_snapshot()
@@ -15192,6 +15210,15 @@ def _run_agent_streaming(
                         # name guard, payload shape, and swallow-all
                         # error policy.
                         emit_todo_state(
+                            put,
+                            name=name,
+                            function_result=function_result,
+                            session_id=session_id,
+                            stream_id=stream_id,
+                        )
+                        # Staged skill writes get the same live mirror --
+                        # see the legacy path above for the contract.
+                        emit_skill_pending_state(
                             put,
                             name=name,
                             function_result=function_result,

@@ -1863,6 +1863,57 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
     /api/skills/content        ?name=X -> full skill data including SKILL.md content
     /api/memory                MEMORY.md + USER.md + SOUL.md. Returns {memory, user, soul, *_path, *_mtime}
 
+### Skill write-approval endpoints (skills.write_approval)
+
+Review surface for agent skill writes that the agent staged instead of saving.
+Backed by `api/write_approval_bridge.py`, which reads the agent's own pending
+store (`<hermes_home>/pending/skills/*.json`) — the same files the CLI's
+`/skills pending` reads. All six run inside `profile_env_for_active_request`:
+the agent resolves both the pending store and the skills directory through
+`get_hermes_home()` at call time, so a route outside that context would read one
+profile's queue and apply it to another profile's skills.
+
+GET:
+
+    /api/skills/pending        {available, gate_enabled, count, items:[{id, action,
+                               name, file_path, summary, origin, created_at}]}.
+                               Never includes the staged body — see /diff.
+    /api/skills/pending/count  {available, gate_enabled, count}. Cheap; backs the
+                               Skills tab badge.
+    /api/skills/pending/diff   ?id=X -> the summary plus `diff`. NOT uniformly a
+                               diff: `create` returns the whole new SKILL.md,
+                               `delete`/`remove_file` return one sentence, and only
+                               `edit`/`patch`/`write_file` return a unified diff.
+                               400 on a malformed id, 404 when unknown.
+
+POST:
+
+    /api/skills/pending/approve  {"id": "<id>"|"all"} -> {ok, applied, failures[],
+                                 remaining}. Replays the staged write and discards
+                                 the record ONLY on success, matching the CLI: a
+                                 write that fails to apply stays staged so it can
+                                 be retried. Partial bulk failure reports both the
+                                 applied count and per-id errors.
+    /api/skills/pending/reject   {"id": "<id>"|"all"} -> {ok, rejected, remaining}.
+                                 Discards without applying.
+    /api/skills/write-approval   {"enabled": bool} -> writes skills.write_approval
+                                 to the active profile's config.yaml (the same key
+                                 the CLI's `/skills approval on|off` writes), then
+                                 returns the refreshed pending state.
+
+Pending ids are agent-minted `uuid4().hex[:8]`. The agent's `get_pending` /
+`discard_pending` build `pending_dir / f"{id}.json"` with no sanitisation, so
+`valid_pending_id()` enforces `^[0-9a-f]{8}$` at the route boundary before any
+agent call. Session YOLO mode does not bypass this gate: YOLO is session-scoped
+and belongs to the dangerous-command approval queue, while this gate is
+config-level and also covers background-review writes that have no session.
+
+Live signal: `api/skill_pending_state.py` mirrors a staged write into a
+`skill_pending` SSE event from both `tool_complete` paths in `api/streaming.py`
+(the same shape `api/todo_state.py` uses for the Todos panel). That covers
+foreground writes only — the background self-improvement review stages after the
+turn, so the client also refreshes on `done`.
+
 ### POST Endpoints Added in Sprint 3
 
     /api/crons/run             {job_id} -> triggers run in daemon thread. Returns {ok, status}.
@@ -1992,6 +2043,19 @@ Pause/Resume: POST /api/crons/pause and /api/crons/resume call the cron.jobs fun
 `loadSkills()` fetches GET /api/skills, caches in `_skillsData`. `renderSkills()` groups
 by category, filters by search input. Clicking a skill calls `openSkill(name)` which
 fetches GET /api/skills/content and renders in the right panel using `showPreview('md')`.
+
+`loadSkillsPending()` fetches GET /api/skills/pending and renders staged agent skill
+writes into `#skillsPending` — a **sibling** of `#skillsList`, not a section inside it,
+because `renderSkills()` clears that container on every search keystroke. A pending row
+opens via `openSkillPending(id)` into the same `#mainSkills` view a real skill opens in,
+with `_setSkillHeaderButtons('pending')` swapping Edit/Delete for Approve/Reject the way
+`'edit'` mode swaps in Cancel/Save. `_clearSkillSelection()` clears both `.skill-item` and
+`.skill-pending-item` selections, since the two row types share one main view.
+
+Refresh triggers, in full: the `skill_pending` SSE event (foreground writes, mid-turn),
+turn end via `done` (background-review writes, which have no stream), panel open, and
+profile switch (the queue is per-profile, so `_profileSwitchPanelLoad()` drops the
+previous profile's state before reloading). No polling timer and no new SSE channel.
 
 #### Memory Panel
 

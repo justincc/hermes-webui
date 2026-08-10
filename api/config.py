@@ -6280,6 +6280,31 @@ def set_reasoning_display(show: bool) -> dict:
     return get_reasoning_status()
 
 
+def set_write_approval(subsystem: str, enabled: bool) -> bool:
+    """Persist ``<subsystem>.write_approval`` to the active profile's config.yaml.
+
+    Mirrors CLI ``/skills approval on|off`` (``gateway/slash_commands.py``):
+    same key, same profile scope, so the gate a user turns on in the browser is
+    the gate the terminal REPL and the messaging gateways enforce.
+
+    ``subsystem`` is ``skills`` or ``memory``; anything else raises ValueError
+    so a typo cannot write a dead config key that silently never gates.
+    """
+    if subsystem not in ("skills", "memory"):
+        raise ValueError(f"unknown write-approval subsystem '{subsystem}'")
+    config_path = _get_config_path()
+    with _cfg_lock:
+        config_data = _load_yaml_config_file(config_path)
+        section = config_data.get(subsystem)
+        if not isinstance(section, dict):
+            section = {}
+        section["write_approval"] = bool(enabled)
+        config_data[subsystem] = section
+        _save_yaml_config_file(config_path, config_data)
+    reload_config()
+    return bool(enabled)
+
+
 def set_reasoning_effort(
     effort: str,
     *,

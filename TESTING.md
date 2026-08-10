@@ -2288,6 +2288,124 @@ Bridged CLI sessions:
 
 ---
 
+## Section 38: Skill Write Approval (skills.write_approval)
+
+Requires a Hermes profile whose agent source is mounted. Use an isolated
+`HERMES_HOME` — approving a staged write performs real filesystem writes into
+that profile's `skills/` directory.
+
+### T38.1: Toggle Appears and Persists to config.yaml
+STEPS:
+  1. Settings → Preferences
+  2. Tick "Review skill changes before they are saved"
+  3. `cat $HERMES_HOME/config.yaml`
+EXPECT:
+  - Toast confirming skill changes now need approval
+  - `skills: {write_approval: true}` present in config.yaml
+  - Running `/skills approval` in the Hermes CLI on the same profile reports it ON
+FAIL: Toggle silently reverts, key written to the wrong profile, CLI disagrees.
+
+### T38.2: Toggle Hidden Without Agent Source
+STEPS:
+  1. Start the WebUI with no hermes-agent source discoverable
+  2. Settings → Preferences
+EXPECT:
+  - The skill-approval field is not shown (a gate that cannot be enforced must
+    not be offered)
+FAIL: A dead toggle that appears to work.
+
+### T38.3: Staged Write Appears Live During a Turn
+STEPS:
+  1. With the gate on, ask the agent to create a skill
+  2. Watch the Skills tab in the rail while the turn is still running
+EXPECT:
+  - A toast reporting the change was staged for review
+  - A count badge appears on the Skills tab (desktop and mobile layouts)
+  - The Skills panel shows a "Pending review (1)" group above the search box
+FAIL: Nothing appears until manual refresh; badge count disagrees with the list.
+
+### T38.4: Search Does Not Destroy the Pending Group
+STEPS:
+  1. With at least one staged write, open the Skills panel
+  2. Type into the skills search box, then clear it
+EXPECT:
+  - The Pending review group stays put throughout
+FAIL: The group vanishes on the first keystroke.
+
+### T38.5: Diff Rendering Per Action
+STEPS:
+  1. Stage a `create`, an `edit`/`patch`, and a `delete` (three separate turns)
+  2. Click each pending row
+EXPECT:
+  - create → the proposed SKILL.md renders as formatted markdown, with the
+    frontmatter collapsed under "Metadata"
+  - edit/patch → a coloured unified diff
+  - delete → a warning line plus a collapsible view of the content that would
+    be lost
+  - In all three, the header shows Approve and Reject instead of Edit and Delete
+FAIL: A create shown as a broken diff; a delete offered with no visible content.
+
+### T38.6: Approve Applies and Refreshes
+STEPS:
+  1. Open a staged `create` and click Approve
+EXPECT:
+  - Toast confirming the approval
+  - The skill appears in the list below (cache invalidated, not stale)
+  - The pending group's count drops; it disappears at zero
+  - The file exists on disk under `$HERMES_HOME/skills/<name>/SKILL.md`
+FAIL: List still stale, badge still counting, file not written.
+
+### T38.7: Reject Discards Without Writing
+STEPS:
+  1. Stage an `edit` to an existing skill, note its current content
+  2. Click Reject
+EXPECT:
+  - The record disappears; the skill on disk is unchanged
+FAIL: The edit landed anyway.
+
+### T38.8: Failed Approve Keeps the Record
+STEPS:
+  1. Stage a `patch` against a skill, then delete that skill from disk
+  2. Click Approve
+EXPECT:
+  - A warning toast naming the failure
+  - The pending row is STILL THERE (a change that could not be applied must be
+    retryable, not silently lost)
+FAIL: The row vanishes, taking the staged change with it.
+
+### T38.9: Concurrent Resolution From the CLI
+STEPS:
+  1. Stage a write; leave the WebUI panel open
+  2. In the Hermes CLI on the same profile, run `/skills reject <id>`
+  3. Back in the browser, click Approve on that row
+EXPECT:
+  - No error surfaced; the list simply resyncs and the row is gone
+FAIL: A hard error for work someone else already handled.
+
+### T38.10: Profile Isolation
+STEPS:
+  1. Stage a write under profile A
+  2. Switch to profile B
+EXPECT:
+  - Pending group and badge are empty for B
+  - Switching back to A shows the record again
+FAIL: A's queue visible under B, or approving from B writes into B's skills.
+
+### T38.11: Background Review Writes Surface at Turn End
+STEPS:
+  1. With the gate on, complete a turn substantial enough to trigger the
+     background self-improvement review
+EXPECT:
+  - After the turn settles, the badge picks up any write the review staged
+  - The row is labelled as a background review, not an agent write
+FAIL: Background-staged writes are invisible until the panel is reopened.
+
+*Automated coverage: `./scripts/test.sh tests/test_skill_write_approval.py -v`
+(agent-backed cases skip when no hermes-agent source is discoverable; set
+`HERMES_WEBUI_AGENT_DIR` to run them).*
+
+---
+
 *Last updated: v0.51.792, July 1, 2026*
 *Total automated tests collected: ~11,500 (run `./scripts/test.sh tests/ --collect-only -q` for the exact current count)*
 *Regression gate: tests/test_regressions.py*

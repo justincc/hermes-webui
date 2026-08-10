@@ -378,7 +378,7 @@ before the session's named-profile Gateway ownership is known.
 ### Panels
 - **Chat** -- session list, search, pin, archive, projects, new conversation
 - **Tasks** -- view, create, edit, run, pause/resume, delete cron jobs; run history; completion alerts
-- **Skills** -- list all skills by category, search, preview, create/edit/delete; linked files viewer
+- **Skills** -- list all skills by category, search, preview, create/edit/delete; linked files viewer; review staged agent skill writes (diff, approve, reject) when `skills.write_approval` is on
 - **Memory** -- view and edit MEMORY.md and USER.md inline
 - **Profiles** -- create, switch, delete agent profiles; clone config
 - **Todos** -- live task list from the current session; hidden while the in-chat task list toggle is on, which also disables the workspace-panel Todos tab

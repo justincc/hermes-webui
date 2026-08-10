@@ -6585,6 +6585,18 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       if(typeof scheduleTodosRefresh==='function') scheduleTodosRefresh();
     });
 
+    // A skill write was staged instead of saved (skills.write_approval is on).
+    // Foreground writes only -- the background self-improvement review stages
+    // after the turn, which the done/stream_end refresh below covers.
+    source.addEventListener('skill_pending',e=>{
+      let d={};
+      try{ d=JSON.parse(e.data)||{}; }catch(_){ d={}; }
+      if(typeof loadSkillsPending==='function') loadSkillsPending();
+      if(typeof showToast==='function'&&typeof t==='function'){
+        showToast(t('skill_pending_staged_toast',d.gist||''),5000,'warning');
+      }
+    });
+
     source.addEventListener('approval',e=>{
       const d=JSON.parse(e.data);
       _applyToAnchor('approval',d,e);
@@ -6757,6 +6769,11 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       // S.messages with stale server data (issue #3195).
       _streamFinalized=true;
       _terminalStateReached=true;
+      // The background self-improvement review runs after the turn and can
+      // stage skill writes on a thread with no stream attached, so the live
+      // skill_pending event never fires for those. Turn end is the only
+      // signal that covers them.
+      if(typeof loadSkillsPending==='function') loadSkillsPending();
       if(_persistTimer){clearTimeout(_persistTimer);_persistTimer=null;}
       _cancelThrottledSnapshotTimer();
       const _doneData=JSON.parse(e.data);
@@ -7603,7 +7620,7 @@ function attachLiveStream(activeSid, streamId, uploaded=[], options={}){
       })();
     });
 
-    for(const _runJournalEventName of ['token','interim_assistant','reasoning','tool','tool_complete','todo_state','approval','clarify','state_saved','title','title_status','context_status','goal','goal_continue','done','stream_end','pending_steer_leftover','compressing','compressed','metering','apperror','warning','error','cancel']){
+    for(const _runJournalEventName of ['token','interim_assistant','reasoning','tool','tool_complete','todo_state','approval','skill_pending','clarify','state_saved','title','title_status','context_status','goal','goal_continue','done','stream_end','pending_steer_leftover','compressing','compressed','metering','apperror','warning','error','cancel']){
       source.addEventListener(_runJournalEventName,_rememberRunJournalCursor);
     }
   }

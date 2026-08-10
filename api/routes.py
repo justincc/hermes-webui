@@ -17146,6 +17146,38 @@ def handle_get(handler, parsed) -> bool:
             data["linked_files"] = {}
         return j(handler, data)
 
+    # ── Skill write-approval API (GET) ──
+    # Every handler runs inside the active profile's Hermes-home context: the
+    # agent resolves both the pending store and the skills directory through
+    # get_hermes_home() at call time, so without this the WebUI would read the
+    # process profile's queue while the panel shows another profile's skills.
+    if parsed.path == "/api/skills/pending":
+        from api import write_approval_bridge as wab
+
+        with wab.with_profile("skill write approval list"):
+            return j(handler, wab.state(wab.SKILLS))
+
+    if parsed.path == "/api/skills/pending/count":
+        from api import write_approval_bridge as wab
+
+        with wab.with_profile("skill write approval count"):
+            return j(handler, wab.state(wab.SKILLS, include_items=False))
+
+    if parsed.path == "/api/skills/pending/diff":
+        from api import write_approval_bridge as wab
+
+        qs = parse_qs(parsed.query)
+        pending_id = qs.get("id", [""])[0]
+        if not wab.valid_pending_id(pending_id):
+            return bad(handler, "Invalid pending id", 400)
+        with wab.with_profile("skill write approval diff"):
+            record = wab.get_pending(wab.SKILLS, pending_id)
+            if not record:
+                return bad(handler, "Pending skill write not found", 404)
+            summary = wab.summarize(record)
+            summary["diff"] = wab.pending_diff(record)
+            return j(handler, summary)
+
     # ── Memory API (GET) ──
     if parsed.path == "/api/memory":
         return _handle_memory_read(handler, parsed)
@@ -19580,6 +19612,16 @@ def handle_post(handler, parsed) -> bool:
 
     if parsed.path == "/api/skills/toggle":
         return _handle_skill_toggle(handler, body)
+
+    # ── Skill write-approval (POST) ──
+    if parsed.path == "/api/skills/pending/approve":
+        return _handle_skill_pending_resolve(handler, body, approve=True)
+
+    if parsed.path == "/api/skills/pending/reject":
+        return _handle_skill_pending_resolve(handler, body, approve=False)
+
+    if parsed.path == "/api/skills/write-approval":
+        return _handle_skill_write_approval_toggle(handler, body)
 
     # ── Memory (POST) ──
     if parsed.path == "/api/memory/write":
@@ -33427,6 +33469,74 @@ def _handle_skill_toggle(handler, body):
     reload_config()  # outside with block — reload_config() acquires the lock itself
     _SKILLS_STATS_CACHE.clear()
     return j(handler, {"ok": True, "name": name, "enabled": enabled})
+
+
+def _handle_skill_pending_resolve(handler, body, *, approve):
+    """Approve or reject staged skill writes from the Skills panel.
+
+    Semantics mirror the CLI's ``/skills approve|reject`` handler
+    (``hermes_cli/write_approval_commands.py``) so the two surfaces can be used
+    interchangeably against the same queue:
+
+    * ``id`` may be a single pending id or the literal ``"all"``.
+    * Approve replays the staged write and discards the record **only when the
+      replay succeeded** — a write that fails to apply (its skill was renamed or
+      deleted since staging) stays staged so the user can retry, rather than
+      being silently lost.
+    * A partial bulk failure reports the applied count *and* the per-id errors;
+      it is never reported as a clean success.
+    """
+    from api import write_approval_bridge as wab
+
+    pending_id = str(body.get("id", "") or "").strip()
+    if not pending_id:
+        return bad(handler, "id is required")
+    is_bulk = pending_id.lower() == "all"
+    if not is_bulk and not wab.valid_pending_id(pending_id):
+        return bad(handler, "Invalid pending id", 400)
+    if not wab.is_available():
+        return bad(handler, "Skill write approval is unavailable", 503)
+
+    with wab.with_profile("skill write approval resolve"):
+        if approve:
+            result = wab.approve(wab.SKILLS, "all" if is_bulk else pending_id)
+        else:
+            result = wab.reject(wab.SKILLS, "all" if is_bulk else pending_id)
+
+    if not is_bulk and approve and not result["applied"] and not result["failures"]:
+        # Nothing applied and nothing failed: the record was already resolved,
+        # most likely from the CLI. Not an error — the client just refreshes.
+        return j(handler, {"ok": True, "already_resolved": True, **result})
+    if not is_bulk and not approve and not result["rejected"]:
+        return j(handler, {"ok": True, "already_resolved": True, **result})
+
+    result["ok"] = not result.get("failures")
+    return j(handler, result)
+
+
+def _handle_skill_write_approval_toggle(handler, body):
+    """Turn ``skills.write_approval`` on or off for the active profile.
+
+    Writes the same config key the CLI's ``/skills approval on|off`` writes, so
+    the gate is shared by the browser, the terminal REPL, and the gateways for
+    that profile.
+    """
+    from api import write_approval_bridge as wab
+
+    if "enabled" not in body:
+        return bad(handler, "enabled is required")
+    enabled = bool(body.get("enabled"))
+    try:
+        from api.config import set_write_approval
+
+        set_write_approval("skills", enabled)
+    except ValueError as e:
+        return bad(handler, str(e))
+    except Exception as e:
+        return bad(handler, _sanitize_error(e), 500)
+
+    with wab.with_profile("skill write approval toggle"):
+        return j(handler, {"ok": True, **wab.state(wab.SKILLS)})
 
 
 def _handle_memory_write(handler, body):
