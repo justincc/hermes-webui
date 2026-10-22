@@ -85,6 +85,21 @@ def gate_enabled(subsystem: str) -> bool:
         return False
 
 
+def _affected_names(payload: dict) -> list[str]:
+    """Skill names a staged write touches, in first-seen order.
+
+    A ``batch`` payload has no top-level ``name``; each op names its own skill
+    (falling back to the legacy top-level ``name``, as the agent's replay does).
+    """
+    ops = payload.get("operations") if payload.get("action") == "batch" else None
+    names: list[str] = []
+    for op in ops if isinstance(ops, list) else [payload]:
+        name = (op.get("name") if isinstance(op, dict) else None) or payload.get("name")
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+    return names
+
+
 def summarize(record: dict) -> dict:
     """Project a stored record down to the fields the browser needs.
 
@@ -99,6 +114,7 @@ def summarize(record: dict) -> dict:
         "id": record.get("id", ""),
         "action": record.get("action", "") or payload.get("action", ""),
         "name": payload.get("name", ""),
+        "names": _affected_names(payload),
         "file_path": payload.get("file_path", "") or "",
         "summary": record.get("summary", ""),
         "origin": record.get("origin", "foreground"),

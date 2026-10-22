@@ -706,3 +706,35 @@ class TestLocaleParity:
         assert len(values) == self.BLOCKS
         for value in values:
             assert "{0}" in value, f"{key} lost its {{0}} placeholder: {value!r}"
+
+
+class TestAffectedNames:
+    def test_batch_lists_each_skill_once_in_op_order(self):
+        from api import write_approval_bridge as wab
+
+        item = wab.summarize({
+            "id": "x",
+            "action": "batch",
+            "summary": "batch(3 ops: patch, create, patch) on alpha, beta",
+            "payload": {"action": "batch", "operations": [
+                {"action": "patch", "name": "beta"},
+                {"action": "create", "name": "alpha"},
+                {"action": "patch", "name": "beta"},
+            ]},
+        })
+        assert item["names"] == ["beta", "alpha"]
+        assert item["name"] == ""
+
+    def test_batch_op_without_name_uses_legacy_top_level_name(self):
+        from api import write_approval_bridge as wab
+
+        item = wab.summarize({"payload": {"action": "batch", "name": "legacy", "operations": [
+            {"action": "patch"}, {"action": "patch", "name": "other"},
+        ]}})
+        assert item["names"] == ["legacy", "other"]
+
+    def test_single_op_names_its_skill(self):
+        from api import write_approval_bridge as wab
+
+        assert wab.summarize({"payload": {"action": "patch", "name": "demo"}})["names"] == ["demo"]
+        assert wab.summarize({"payload": "not-a-dict"})["names"] == []

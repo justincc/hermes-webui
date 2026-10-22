@@ -5343,6 +5343,11 @@ function _skillPendingActionLabel(action) {
   return label === key ? String(action || '') : label;
 }
 
+function _skillPendingNames(item) {
+  if (Array.isArray(item.names) && item.names.length) return item.names.map(String);
+  return item.name ? [String(item.name)] : [];
+}
+
 async function loadSkillsPending() {
   try {
     _skillsPendingState = await api('/api/skills/pending');
@@ -5407,12 +5412,20 @@ function renderSkillsPending() {
     const action = document.createElement('span');
     action.className = 'skill-pending-action action-' + String(item.action || '').replace(/[^a-z_]/g, '');
     action.textContent = _skillPendingActionLabel(item.action);
-    const name = document.createElement('span');
+    const name = document.createElement('div');
     name.className = 'skill-pending-name';
-    name.textContent = item.name || '';
+    // One line per affected skill, under the action label.
+    const names = _skillPendingNames(item);
+    for (const n of names) {
+      const line = document.createElement('div');
+      line.textContent = n;
+      name.appendChild(line);
+    }
     const gist = document.createElement('span');
     gist.className = 'skill-pending-gist';
-    gist.textContent = item.summary || '';
+    // A batch gist restates its ops and skill names; the names lines cover it
+    // -- but only when names arrived, or the row would be left blank.
+    gist.textContent = item.action === 'batch' && names.length ? '' : (item.summary || '');
     const meta = document.createElement('span');
     meta.className = 'skill-pending-meta';
     const origin = item.origin === 'background_review'
@@ -5422,7 +5435,9 @@ function renderSkillsPending() {
       ? _formatRelativeSessionTime(item.created_at * 1000)
       : '';
     meta.textContent = when ? `${origin} · ${when}` : origin;
-    el.append(action, name, gist, meta);
+    el.append(action, name);
+    if (gist.textContent) el.append(gist);
+    el.append(meta);
     el.onclick = () => openSkillPending(item.id, el);
     box.appendChild(el);
   }
@@ -5463,7 +5478,7 @@ function _renderSkillPendingDetail(data) {
   const diff = data.diff || '';
   let html = '<div class="skill-pending-detail-head">'
     + `<span class="skill-pending-action action-${esc(action.replace(/[^a-z_]/g, ''))}">${esc(_skillPendingActionLabel(action))}</span>`
-    + `<span class="skill-pending-detail-name">${esc(data.name || '')}</span>`
+    + `<span class="skill-pending-detail-name">${esc(_skillPendingNames(data).join(', '))}</span>`
     + `<span class="skill-pending-detail-origin">${esc(data.origin === 'background_review' ? t('skill_pending_origin_background') : t('skill_pending_origin_agent'))}</span>`
     + '</div>';
 

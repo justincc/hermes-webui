@@ -2225,7 +2225,8 @@
   .skill-pending-action{flex-shrink:0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:1px 5px;border-radius:4px;background:var(--border);color:var(--text);}
   .skill-pending-action.action-delete,.skill-pending-action.action-remove_file{background:rgba(239,68,68,.16);color:#ef4444;}
   .skill-pending-action.action-create{background:rgba(34,197,94,.16);color:#22c55e;}
-  .skill-pending-name{font-weight:500;flex-shrink:0;}
+  .skill-pending-name{flex:1 1 100%;min-width:0;font-weight:500;}
+  .skill-pending-name>div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .skill-pending-gist{flex:1 1 100%;min-width:0;font-size:11px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .skill-pending-meta{flex:1 1 100%;font-size:10px;opacity:.55;}
   .skills-pending-badge{position:absolute;top:2px;right:2px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--warning,#E0B15D);color:#1a1a1a;font-size:9px;font-weight:700;line-height:14px;text-align:center;box-sizing:border-box;pointer-events:none;}
