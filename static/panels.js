@@ -5435,6 +5435,7 @@ function renderSkillsPending() {
       ? _formatRelativeSessionTime(item.created_at * 1000)
       : '';
     meta.textContent = when ? `${origin} · ${when}` : origin;
+    if (item.id) meta.insertAdjacentHTML('beforeend', ' · ' + _skillPendingIdHtml(item.id));
     el.append(action, name);
     if (gist.textContent) el.append(gist);
     el.append(meta);
@@ -5480,10 +5481,7 @@ function _renderSkillPendingDetail(data) {
     + `<span class="skill-pending-action action-${esc(action.replace(/[^a-z_]/g, ''))}">${esc(_skillPendingActionLabel(action))}</span>`
     + `<span class="skill-pending-detail-name">${esc(_skillPendingNames(data).join(', '))}</span>`
     + `<span class="skill-pending-detail-origin">${esc(data.origin === 'background_review' ? t('skill_pending_origin_background') : t('skill_pending_origin_agent'))}</span>`
-    // The id the CLI's /skills approve|reject|diff <id> takes.
-    + (data.id
-      ? `<span class="skill-pending-detail-id">${esc(data.id)}<button class="skill-pending-id-copy" type="button" data-copy="${esc(data.id)}" title="${esc(t('copy'))}" aria-label="${esc(t('copy'))}" onclick="copySkillPendingId(this)">${li('copy', 12)}</button></span>`
-      : '')
+    + (data.id ? _skillPendingIdHtml(data.id) : '')
     + '</div>';
 
   if (action === 'create') {
@@ -5513,6 +5511,12 @@ function _renderSkillPendingDetail(data) {
   _skillMode = 'pending';
   _setSkillHeaderButtons('pending');
   if (action === 'delete' || action === 'remove_file') _loadSkillPendingLostContent(data);
+}
+
+// The id the CLI's /skills approve|reject|diff <id> takes. The copy click stops
+// there, so on a list row it does not also open the row.
+function _skillPendingIdHtml(id) {
+  return `<span class="skill-pending-id">${esc(id)}<button class="skill-pending-id-copy" type="button" data-copy="${esc(id)}" title="${esc(t('copy'))}" aria-label="${esc(t('copy'))}" onclick="copySkillPendingId(this);event.stopPropagation()">${li('copy', 12)}</button></span>`;
 }
 
 function copySkillPendingId(btn) {

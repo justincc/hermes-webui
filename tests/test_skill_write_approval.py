@@ -564,14 +564,17 @@ class TestFrontendWiring:
         assert "_colorDiffLines" in block
         assert "action === 'delete'" in block
 
-    def test_detail_shows_a_copyable_pending_id(self):
+    def test_rows_and_detail_show_a_copyable_pending_id(self):
         """The id is what the CLI's /skills approve|reject|diff <id> takes."""
         panels = self.PANELS
-        start = panels.index("function _renderSkillPendingDetail(")
-        block = panels[start:start + 1600]
-        assert "skill-pending-detail-id" in block
-        assert 'data-copy="${esc(data.id)}"' in block
-        assert 'onclick="copySkillPendingId(this)"' in block
+        detail = panels[panels.index("function _renderSkillPendingDetail("):][:1600]
+        assert "_skillPendingIdHtml(data.id)" in detail
+        rows = panels[panels.index("function renderSkillsPending("):][:3200]
+        assert "_skillPendingIdHtml(item.id)" in rows
+        html = panels[panels.index("function _skillPendingIdHtml("):][:600]
+        assert 'data-copy="${esc(id)}"' in html
+        # A copy click on a list row must not also open the row.
+        assert "copySkillPendingId(this);event.stopPropagation()" in html
         copy = panels[panels.index("function copySkillPendingId("):][:500]
         # _copyText falls back to execCommand off a secure context (plain-http access).
         assert "_copyText(text)" in copy

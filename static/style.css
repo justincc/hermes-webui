@@ -2233,7 +2233,7 @@
   .skill-pending-detail-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
   .skill-pending-detail-name{font-weight:600;}
   .skill-pending-detail-origin{font-size:11px;color:var(--muted);}
-  .skill-pending-detail-id{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:11px;color:var(--muted);opacity:.7;}
+  .skill-pending-id{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:11px;color:var(--muted);opacity:.7;}
   .skill-pending-id-copy{display:inline-flex;background:none;border:0;padding:0;cursor:pointer;color:inherit;}
   .skill-pending-id-copy:hover{color:var(--text);}
   .skill-pending-id-copy.copied{color:#22c55e;}
