@@ -5480,6 +5480,10 @@ function _renderSkillPendingDetail(data) {
     + `<span class="skill-pending-action action-${esc(action.replace(/[^a-z_]/g, ''))}">${esc(_skillPendingActionLabel(action))}</span>`
     + `<span class="skill-pending-detail-name">${esc(_skillPendingNames(data).join(', '))}</span>`
     + `<span class="skill-pending-detail-origin">${esc(data.origin === 'background_review' ? t('skill_pending_origin_background') : t('skill_pending_origin_agent'))}</span>`
+    // The id the CLI's /skills approve|reject|diff <id> takes.
+    + (data.id
+      ? `<span class="skill-pending-detail-id">${esc(data.id)}<button class="skill-pending-id-copy" type="button" data-copy="${esc(data.id)}" title="${esc(t('copy'))}" aria-label="${esc(t('copy'))}" onclick="copySkillPendingId(this)">${li('copy', 12)}</button></span>`
+      : '')
     + '</div>';
 
   if (action === 'create') {
@@ -5509,6 +5513,17 @@ function _renderSkillPendingDetail(data) {
   _skillMode = 'pending';
   _setSkillHeaderButtons('pending');
   if (action === 'delete' || action === 'remove_file') _loadSkillPendingLostContent(data);
+}
+
+function copySkillPendingId(btn) {
+  const text = btn && btn.dataset.copy;
+  if (!text) return;
+  _copyText(text).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = li('check', 12);
+    btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
+  }).catch(() => showToast(t('copy_failed')));
 }
 
 async function _loadSkillPendingLostContent(data) {

@@ -564,6 +564,19 @@ class TestFrontendWiring:
         assert "_colorDiffLines" in block
         assert "action === 'delete'" in block
 
+    def test_detail_shows_a_copyable_pending_id(self):
+        """The id is what the CLI's /skills approve|reject|diff <id> takes."""
+        panels = self.PANELS
+        start = panels.index("function _renderSkillPendingDetail(")
+        block = panels[start:start + 1600]
+        assert "skill-pending-detail-id" in block
+        assert 'data-copy="${esc(data.id)}"' in block
+        assert 'onclick="copySkillPendingId(this)"' in block
+        copy = panels[panels.index("function copySkillPendingId("):][:500]
+        # _copyText falls back to execCommand off a secure context (plain-http access).
+        assert "_copyText(text)" in copy
+        assert ".skill-pending-id-copy" in self.CSS
+
     def test_deletion_shows_what_would_be_lost(self):
         panels = self.PANELS
         assert "_loadSkillPendingLostContent" in panels
