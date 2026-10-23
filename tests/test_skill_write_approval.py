@@ -580,6 +580,15 @@ class TestFrontendWiring:
         assert "_copyText(text)" in copy
         assert ".skill-pending-id-copy" in self.CSS
 
+    def test_detail_shows_the_local_creation_time_to_the_second(self):
+        panels = self.PANELS
+        detail = panels[panels.index("function _renderSkillPendingDetail("):][:1800]
+        assert "_skillPendingTime(data.created_at)" in detail
+        # After the origin, before the id.
+        assert detail.index("skill-pending-detail-origin") < detail.index("_skillPendingTime(") < detail.index("_skillPendingIdHtml(data.id)")
+        fmt = panels[panels.index("function _skillPendingTime("):][:400]
+        assert "getHours()" in fmt and "getSeconds()" in fmt
+
     def test_deletion_shows_what_would_be_lost(self):
         panels = self.PANELS
         assert "_loadSkillPendingLostContent" in panels

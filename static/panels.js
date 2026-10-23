@@ -5481,6 +5481,7 @@ function _renderSkillPendingDetail(data) {
     + `<span class="skill-pending-action action-${esc(action.replace(/[^a-z_]/g, ''))}">${esc(_skillPendingActionLabel(action))}</span>`
     + `<span class="skill-pending-detail-name">${esc(_skillPendingNames(data).join(', '))}</span>`
     + `<span class="skill-pending-detail-origin">${esc(data.origin === 'background_review' ? t('skill_pending_origin_background') : t('skill_pending_origin_agent'))}</span>`
+    + (data.created_at ? `<span class="skill-pending-detail-time">${esc(_skillPendingTime(data.created_at))}</span>` : '')
     + (data.id ? _skillPendingIdHtml(data.id) : '')
     + '</div>';
 
@@ -5511,6 +5512,13 @@ function _renderSkillPendingDetail(data) {
   _skillMode = 'pending';
   _setSkillHeaderButtons('pending');
   if (action === 'delete' || action === 'remove_file') _loadSkillPendingLostContent(data);
+}
+
+// created_at is epoch seconds; shown in the browser's local time, to the second.
+function _skillPendingTime(createdAt) {
+  const d = new Date(Number(createdAt) * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 // The id the CLI's /skills approve|reject|diff <id> takes. The copy click stops
