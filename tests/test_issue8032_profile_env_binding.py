@@ -388,6 +388,7 @@ _ALLOWED = {
     ("commands.py", "_run_codex_runtime_command._persist_config"): _WRITER,
     ("config.py", "set_max_tokens"): _WRITER,
     ("config.py", "set_reasoning_display"): _WRITER,
+    ("config.py", "set_write_approval"): _WRITER,
     # #8253 moved the file write out of set_reasoning_effort into write_reasoning_effort.
     ("config.py", "write_reasoning_effort"): _WRITER,
     ("config.py", "set_hermes_default_model"): _WRITER,
