@@ -322,3 +322,18 @@ def with_profile(purpose: str) -> Callable:
     from api.profiles import profile_env_for_active_request
 
     return profile_env_for_active_request(purpose, logger_override=logger)
+
+
+def with_profile_readonly(purpose: str) -> Callable:
+    """Thread-local profile scope for read-only routes the browser polls.
+
+    ``with_profile`` mirrors a named profile into process-wide ``os.environ``,
+    which a timer must not do alongside running agent turns. This scope only
+    sets a context-local Hermes-home override. ``include_root`` is required: a
+    root-profile tab must not follow a streaming turn's mirrored ``HERMES_HOME``.
+    """
+    from api.profiles import profile_env_for_active_request_readonly
+
+    return profile_env_for_active_request_readonly(
+        purpose, logger_override=logger, include_root=True
+    )

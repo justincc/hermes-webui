@@ -5604,6 +5604,58 @@ function _updateSkillsPendingBadge() {
   }
 }
 
+// ── Skill write-approval badge poll ──
+// No stream can announce every staged write: the background review stages
+// after its turn's stream has closed, and the CLI and messaging gateways share
+// this queue. Polls the cheap count and fetches the list only when it changes.
+const SKILLS_PENDING_POLL_INTERVAL_MS = 5000;
+let _skillsPendingPollTimer = null;
+let _skillsPendingPollInFlight = false;
+let _skillsPendingPollDisabled = false;
+
+async function pollSkillsPendingCount() {
+  if (document.visibilityState !== 'visible') return;
+  if (_skillsPendingPollInFlight || _skillsPendingPollDisabled) return;
+  _skillsPendingPollInFlight = true;
+  try {
+    const state = await api('/api/skills/pending/count', { timeoutToast: false });
+    if (state && state.available === false) {
+      // No agent source: the gate cannot exist, and that cannot change at runtime.
+      _skillsPendingPollDisabled = true;
+      stopSkillsPendingPoll();
+      return;
+    }
+    const shown = (_skillsPendingState && _skillsPendingState.count) || 0;
+    if (state && (state.count || 0) !== shown) await loadSkillsPending();
+  } catch (_) {
+    // A background poll stays silent; the next tick retries.
+  } finally {
+    _skillsPendingPollInFlight = false;
+  }
+}
+
+function startSkillsPendingPoll() {
+  if (_skillsPendingPollTimer || _skillsPendingPollDisabled) return;
+  if (document.visibilityState !== 'visible') return;
+  void pollSkillsPendingCount();
+  _skillsPendingPollTimer = setInterval(pollSkillsPendingCount, SKILLS_PENDING_POLL_INTERVAL_MS);
+}
+
+function stopSkillsPendingPoll() {
+  if (_skillsPendingPollTimer) {
+    clearInterval(_skillsPendingPollTimer);
+    _skillsPendingPollTimer = null;
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') startSkillsPendingPoll();
+  else stopSkillsPendingPoll();
+});
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startSkillsPendingPoll);
+else startSkillsPendingPoll();
+// ── end skill write-approval badge poll ──
+
 function renderSkillsPending() {
   const box = $('skillsPending');
   if (!box) return;

@@ -18438,7 +18438,8 @@ def handle_get(handler, parsed) -> bool:
     if parsed.path == "/api/skills/pending/count":
         from api import write_approval_bridge as wab
 
-        with wab.with_profile("skill write approval count"):
+        # The badge polls this, so it must not mirror into process env.
+        with wab.with_profile_readonly("skill write approval count"):
             return j(handler, wab.state(wab.SKILLS, include_items=False))
 
     if parsed.path == "/api/skills/pending/diff":

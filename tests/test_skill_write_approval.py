@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -262,6 +264,33 @@ class TestBridgeGuards:
 
 @requires_agent
 class TestProfileIsolation:
+    def test_readonly_scope_counts_the_profile_queue_without_touching_process_env(
+        self, tmp_path, monkeypatch
+    ):
+        import os
+
+        import api.profiles as profiles
+        from api import write_approval_bridge as wab
+
+        home_a = tmp_path / "a"
+        home_b = tmp_path / "b"
+        for h in (home_a, home_b):
+            (h / "skills").mkdir(parents=True)
+
+        monkeypatch.setenv("HERMES_HOME", str(home_b))
+        _stage("skills", {"action": "create", "name": "only-in-b", "content": "x"})
+        monkeypatch.setenv("HERMES_HOME", str(home_a))
+
+        monkeypatch.setattr(profiles, "get_active_profile_name", lambda: "b")
+        monkeypatch.setattr(profiles, "get_hermes_home_for_profile", lambda name: home_b)
+        monkeypatch.setattr(profiles, "get_profile_runtime_env", lambda home: {})
+
+        assert wab.state(wab.SKILLS, include_items=False)["count"] == 0
+        with wab.with_profile_readonly("test"):
+            assert wab.state(wab.SKILLS, include_items=False)["count"] == 1
+            assert os.environ["HERMES_HOME"] == str(home_a)
+        assert wab.state(wab.SKILLS, include_items=False)["count"] == 0
+
     def test_records_staged_in_one_home_are_invisible_from_another(self, tmp_path, monkeypatch):
         from api import write_approval_bridge as wab
 
@@ -477,6 +506,117 @@ class TestStreamingWiring:
         assert "from api.skill_pending_state import emit_skill_pending_state" in _read("api/streaming.py")
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+class TestSkillsPendingPoll:
+    """Runs the real poll block under node with the browser stubbed out."""
+
+    HARNESS = """
+(async () => {
+  let visibility = 'visible', calls = 0, loads = 0, cleared = 0, hold = null, fail = false;
+  let nextState = {available: true, count: 0};
+  let _skillsPendingState = null;
+  const listeners = [], intervals = [];
+  const document = {
+    get visibilityState() { return visibility; },
+    readyState: 'complete',
+    addEventListener: (name, fn) => listeners.push(fn),
+  };
+  const setInterval = (fn, ms) => { intervals.push(ms); return intervals.length; };
+  const clearInterval = () => { cleared++; };
+  const api = async () => {
+    calls++;
+    if (hold) await hold;
+    if (fail) throw new Error('offline');
+    return nextState;
+  };
+  const loadSkillsPending = async () => { loads++; _skillsPendingState = {count: nextState.count}; };
+  const eq = (a, b, why) => { if (a !== b) throw new Error(`${why}: ${a} !== ${b}`); };
+  const settle = () => new Promise(r => setImmediate(r));
+  %(block)s
+  await settle();
+  %(body)s
+  console.log('POLL_OK');
+})().catch(e => { console.error(e.message); process.exit(1); });
+"""
+
+    def _run(self, body):
+        panels = _read("static/panels.js")
+        block = panels[
+            panels.index("// ── Skill write-approval badge poll ──"):
+            panels.index("// ── end skill write-approval badge poll ──")
+        ]
+        result = subprocess.run(
+            ["node", "-e", self.HARNESS % {"block": block, "body": body}],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0 and "POLL_OK" in result.stdout, result.stderr
+
+    def test_polls_on_start_so_the_badge_is_right_after_a_page_load(self):
+        self._run("eq(calls, 1, 'first poll'); eq(intervals.length, 1, 'timer started');")
+
+    def test_refetches_the_list_only_when_the_count_changes(self):
+        self._run("""
+          eq(loads, 0, 'nothing staged');
+          nextState = {available: true, count: 2};
+          await pollSkillsPendingCount();
+          eq(loads, 1, 'count changed');
+          await pollSkillsPendingCount();
+          eq(loads, 1, 'count unchanged');
+        """)
+
+    def test_hidden_tab_stops_polling_and_catches_up_when_visible(self):
+        self._run("""
+          const before = calls;
+          visibility = 'hidden';
+          await pollSkillsPendingCount();
+          eq(calls, before, 'hidden tab must not poll');
+          listeners.forEach(fn => fn());
+          eq(cleared, 1, 'timer cleared when hidden');
+          visibility = 'visible';
+          listeners.forEach(fn => fn());
+          await settle();
+          eq(calls, before + 1, 'catch-up poll on return');
+          eq(intervals.length, 2, 'timer restarted');
+        """)
+
+    def test_a_slow_response_does_not_stack_requests(self):
+        self._run("""
+          let release;
+          hold = new Promise(r => { release = r; });
+          const before = calls;
+          const first = pollSkillsPendingCount();
+          await pollSkillsPendingCount();
+          eq(calls, before + 1, 'overlapping poll skipped');
+          release();
+          hold = null;
+          await first;
+          await pollSkillsPendingCount();
+          eq(calls, before + 2, 'next poll runs after the first settles');
+        """)
+
+    def test_a_failed_poll_does_not_wedge_the_timer(self):
+        self._run("""
+          fail = true;
+          await pollSkillsPendingCount();
+          fail = false;
+          nextState = {available: true, count: 1};
+          await pollSkillsPendingCount();
+          eq(loads, 1, 'recovers on the next tick');
+        """)
+
+    def test_stops_for_good_when_the_agent_is_unavailable(self):
+        self._run("""
+          nextState = {available: false, count: 0};
+          await pollSkillsPendingCount();
+          eq(cleared, 1, 'timer cleared');
+          const before = calls;
+          await pollSkillsPendingCount();
+          listeners.forEach(fn => fn());
+          await settle();
+          eq(calls, before, 'no more requests');
+        """)
+
+
 class TestRoutesWiring:
     ROUTES = None
 
@@ -502,7 +642,6 @@ class TestRoutesWiring:
         src = self.ROUTES
         for marker in (
             '"/api/skills/pending"',
-            '"/api/skills/pending/count"',
             '"/api/skills/pending/diff"',
         ):
             start = src.index(marker)
@@ -513,6 +652,15 @@ class TestRoutesWiring:
             start = src.index(f"def {handler}(")
             block = src[start:start + 2600]
             assert "with wab.with_profile(" in block, f"{handler} escapes the profile context"
+
+    def test_polled_count_route_uses_the_thread_local_scope(self):
+        """The badge polls this route, and the mirrored scope rewrites process
+        env for named profiles, so a timer must not go through it."""
+        src = self.ROUTES
+        start = src.index('"/api/skills/pending/count"')
+        block = src[start:src.index('"/api/skills/pending/diff"')]
+        assert "with wab.with_profile_readonly(" in block
+        assert "with wab.with_profile(" not in block
 
     def test_diff_route_validates_the_id_before_touching_disk(self):
         src = self.ROUTES

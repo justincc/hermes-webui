@@ -1910,10 +1910,12 @@ Complete list of all HTTP endpoints as of Sprint 1 (v0.3).
 Review surface for agent skill writes that the agent staged instead of saving.
 Backed by `api/write_approval_bridge.py`, which reads the agent's own pending
 store (`<hermes_home>/pending/skills/*.json`) — the same files the CLI's
-`/skills pending` reads. All six run inside `profile_env_for_active_request`:
-the agent resolves both the pending store and the skills directory through
-`get_hermes_home()` at call time, so a route outside that context would read one
-profile's queue and apply it to another profile's skills.
+`/skills pending` reads. All six run inside a profile scope: the agent resolves
+both the pending store and the skills directory through `get_hermes_home()` at
+call time, so a route outside that context would read one profile's queue and
+apply it to another profile's skills. Five use `profile_env_for_active_request`.
+The polled `/count` route uses the thread-local
+`profile_env_for_active_request_readonly`, so a timer never rewrites process env.
 
 GET:
 
@@ -1957,7 +1959,7 @@ Live signal: `api/skill_pending_state.py` mirrors a staged write into a
 `skill_pending` SSE event from both `tool_complete` paths in `api/streaming.py`
 (the same shape `api/todo_state.py` uses for the Todos panel). That covers
 foreground writes only — the background self-improvement review stages after the
-turn, so the client also refreshes on `done`.
+turn, when no stream is attached, so the client also polls `/api/skills/pending/count`.
 
 ### POST Endpoints Added in Sprint 3
 
@@ -2098,9 +2100,12 @@ with `_setSkillHeaderButtons('pending')` swapping Edit/Delete for Approve/Reject
 `.skill-pending-item` selections, since the two row types share one main view.
 
 Refresh triggers, in full: the `skill_pending` SSE event (foreground writes, mid-turn),
-turn end via `done` (background-review writes, which have no stream), panel open, and
-profile switch (the queue is per-profile, so `_profileSwitchPanelLoad()` drops the
-previous profile's state before reloading). No polling timer and no new SSE channel.
+turn end via `done`, panel open, profile switch (the queue is per-profile, so
+`_profileSwitchPanelLoad()` drops the previous profile's state before reloading), and
+`pollSkillsPendingCount()` every 5s while the tab is visible. The poll exists for writes
+no stream can announce: background-review writes, which land after the turn's stream has
+closed, and writes staged from the CLI or a messaging gateway. It reads only the count
+and fetches the list when the count differs from what is shown.
 
 #### Memory Panel
 

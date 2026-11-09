@@ -2666,7 +2666,8 @@ STEPS:
   1. With the gate on, complete a turn substantial enough to trigger the
      background self-improvement review
 EXPECT:
-  - After the turn settles, the badge picks up any write the review staged
+  - Within about 5 seconds of the review staging a write, with no further
+    interaction, the badge shows it
   - The row is labelled as a background review, not an agent write
 FAIL: Background-staged writes are invisible until the panel is reopened.
 
